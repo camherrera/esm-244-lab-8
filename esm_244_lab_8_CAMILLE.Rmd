@@ -1,0 +1,208 @@
+---
+title: "ESM 244 Lab 8"
+author: "Camille Herrera"
+date: "February 28, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(tidyverse)
+library(janitor)
+library(plotly)
+library(RColorBrewer)
+
+library(NbClust)
+library(cluster)
+library(factoextra)
+library(dendextend)
+library(ggdendro)
+
+library(pdftools)
+library(tidytext)
+library(wordcloud)
+
+```
+###Part 1. k-means clustering
+```{r}
+
+iris_nice <- iris %>% 
+  clean_names()
+
+ggplot(iris_nice) +
+  geom_point(aes(x = petal_length, y = petal_width, color = species))
+
+```
+
+How many clusters do YOU think should exist, R?
+```{r}
+
+number_est <- NbClust(iris_nice[1:4], min.nc = 2, max.nc = 10, method = "kmeans") # only use info from colums 1-4, set min and max number of clusters
+
+# We'll stick with 3 clusters hen we perform k-means
+
+```
+
+kPerform k-means clustering with 3 groups:
+```{r}
+
+iris_km <- kmeans(iris_nice[1:4], 3)
+
+iris_km$size # 62 38 50 = 150
+iris_km$centers
+iris_km$cluster
+
+iris_cl <- data.frame(iris_nice, cluster_no = factor(iris_km$cluster))
+
+# Look at basic ggplot:
+
+ggplot(iris_cl) +
+  geom_point(aes(x = sepal_length, y = sepal_width, color = cluster_no))
+# this is multivariate info shown in 2D, so not able to show all variables that exist, so some points look like they would be part of other clusters
+
+ggplot(iris_cl) +
+  geom_point(aes(x = petal_length, 
+                 y = petal_width, 
+                 color = cluster_no, 
+                 pch = species)) +
+  scale_color_brewer(palette = "Set2")
+
+plot_ly(x = iris_cl$petal_length,
+        y = iris_cl$petal_width,
+        z = iris_cl$sepal_width,
+        type = "scatter3d")
+
+
+plot_ly(x = iris_cl$petal_length,
+        y = iris_cl$petal_width,
+        z = iris_cl$sepal_width,
+        type = "scatter3d",
+        color = iris_cl$cluster_no,
+        symbol = iris_cl$species,
+        colors = "Set1")
+
+```
+
+###Part 2. Hierarchical cluster analysis
+
+```{r}
+
+wb_env <- read_csv("wb_env.csv")
+# these values exist on varying scales of magnitude
+
+#only keep top 20 GHG emitters (just to simply for our lab visualization)
+
+wb_ghg_20 <- wb_env %>% 
+  arrange(-ghg) %>% 
+  head(20)
+
+#scale it and the coerce back to a dataframe
+
+wb_scaled <- as.data.frame(scale(wb_ghg_20[3:7]))
+rownames(wb_scaled) <- wb_ghg_20$name
+
+# need to calculuate the dissimularity matrix (grid of pairwise distances shown in class)
+
+diss <- dist(wb_scaled, method = "euclidean")
+diss
+
+# Hierarchical agglomerative clustering by complete linkage
+# have to have calculated the dissimularity before conducting the function
+
+hc_complete <- hclust(diss, method = "complete")
+
+plot(hc_complete)
+
+# if consider everything it's own group to start with and then picking apart what's different
+hc_div <- diana(diss)
+plot(hc_div)
+
+dend1 <- as.dendrogram(hc_complete)
+dend2 <- as.dendrogram(hc_div)
+
+tanglegram(dend1, dend2)
+
+ggdendrogram(hc_complete,
+             rotate = TRUE) +
+  theme_minimal()
+
+```
+
+### Part 3. Intro to text analysis: pdftools, stringr, tidytext
+
+```{r}
+
+greta_thunberg <- file.path("greta_thunberg.pdf")
+thunberg_text <- pdf_text(greta_thunberg)
+
+thunberg_df <- data.frame(text = thunberg_text) %>% 
+  mutate(text_full = str_split(text, '\\n')) %>% 
+  unnest(text_full)
+
+speech_text <- thunberg_df %>% 
+  select(text_full) %>% 
+  slice(4:18)
+
+sep_words <- speech_text %>% 
+  unnest_tokens(word, text_full)
+
+word_count <- sep_words %>% 
+  count(word, sort = TRUE)
+# can see there's lots of words that are repeated and common with not a lot of meaning for analyzing text for sentiment or material, may not need all
+#remove stop words from our data that we're analyzing
+
+words_stop <- sep_words %>% 
+  anti_join(stop_words)
+
+get_sentiments("afinn")
+
+# positive words
+pos_words <- get_sentiments("afinn") %>% 
+  filter(score ==5 | score == 4) %>% 
+  head(20)
+pos_words 
+
+neutral_words <- get_sentiments("afinn") %>% 
+  filter(between(score, -1, 1)) %>% 
+  head(20)
+neutral_words
+
+words_stop
+
+```
+
+Bind some lexicon information to our actual speech words (non stop words)
+
+```{r}
+
+sent_afinn <- words_stop %>% 
+  inner_join(get_sentiments("afinn")) #inner join only keeps things that have matches in both dataframes
+sent_afinn
+#notice Greta doesn't show up here because it's not in afinn
+
+sent_nrc <- words_stop %>% 
+  inner_join(get_sentiments("nrc"))
+sent_nrc
+
+nrc_count <- sent_nrc %>% 
+  group_by(sentiment) %>% 
+  tally()
+
+```
+
+```{r}
+
+wordcloud(word_count$word,
+          freq = word_count$n,
+          min.freq = 1, 
+          max.words = 65,
+          scale = c(2, 0.1),
+          colors = brewer.pal(3, "Dark2"))
+#This highlights the stop words --shows importance of filtering out stop words!
+
+```
+
